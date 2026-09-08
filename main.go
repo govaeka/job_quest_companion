@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync/atomic"
 
 	"github.com/govaeka/job_quest_companion/internal/database"
 	"github.com/joho/godotenv"
@@ -13,59 +12,56 @@ import (
 )
 
 type apiConfig struct {
-	fileserverHits atomic.Int32
-	database       *database.Queries
-	secret         string
-	APIKey         string
+	database *database.Queries
 }
 
 func main() {
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatalf("Error loading .env file: %v", err)
 	}
+
 	dbURL := os.Getenv("DB_URL")
-	log.Println("Connecting with DB_URL:", dbURL)
+
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
-	dbQueries := database.New(db)
-	cfg := apiConfig{
-		fileserverHits: atomic.Int32{},
-		database:       dbQueries,
-		secret:         os.Getenv("JWTSecret"),
-		APIKey:         os.Getenv("API_KEY"),
+	queries := database.New(db)
+
+	_ = &apiConfig{ // cfg
+		database: queries,
 	}
 
+	// Routes
 	mux := http.NewServeMux()
+	/*
+		mux.HandleFunc("/", cfg.indexHandler)
+		mux.HandleFunc("/ads", cfg.adsHandler)
+		mux.HandleFunc("/companies", cfg.companiesHandler)
+		mux.HandleFunc("/cvs", cfg.cvsHandler)
+		mux.HandleFunc("/events", cfg.eventsHandler)
+	*/
 
-	fileServDir := http.Dir(".")
-	handlerFileServ := http.FileServer(fileServDir)
+	// Static files
+	mux.Handle("/static/",
+		http.StripPrefix("/static/",
+			http.FileServer(http.Dir("./static")),
+		),
+	)
 
-	strippedHandler := http.StripPrefix("/app", handlerFileServ)
-
-	mux.Handle("/app/", cfg.middlewareMetricsInc(strippedHandler))
-
-	chirpServer := http.Server{
+	// Server
+	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
 
-	mux.HandleFunc("DELETE /api/chirps/{chirpID}", cfg.deleteChirpHandler)
-	mux.HandleFunc("GET /admin/metrics", cfg.hitcountReportingHandler)
-	mux.HandleFunc("GET /api/chirps/{chirpID}", cfg.getChirpHandler)
-	mux.HandleFunc("GET /api/chirps", cfg.getChirpsHandler)
-	mux.HandleFunc("GET /api/healthz", endpointHandler)
-	mux.HandleFunc("POST /admin/reset", cfg.hitcountResetHandler)
-	mux.HandleFunc("POST /api/chirps", cfg.createChirpHandler)
-	mux.HandleFunc("POST /api/login", cfg.loginHandler)
-	mux.HandleFunc("POST /api/polka/webhooks", cfg.upgradePlanUserHandler)
-	mux.HandleFunc("POST /api/refresh", cfg.refreshHandler)
-	mux.HandleFunc("POST /api/revoke", cfg.revokeHandler)
-	mux.HandleFunc("POST /api/users", cfg.createUserHandler)
-	mux.HandleFunc("PUT /api/users", cfg.updateUserHandler)
+	log.Println("Job Quest Companion running on http://localhost:8080")
 
-	chirpServer.ListenAndServe()
+	if err := server.ListenAndServe(); err != nil {
+		log.Fatal(err)
+	}
 }
